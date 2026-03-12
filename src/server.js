@@ -649,4 +649,50 @@ function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
+// === ACTIVITY FEED (live events) ===
+const activityLog = [];
+const MAX_ACTIVITY = 500;
+
+function logActivity(type, data) {
+  activityLog.push({ type, data, timestamp: Date.now(), id: activityLog.length });
+  if (activityLog.length > MAX_ACTIVITY) activityLog.shift();
+}
+
+app.get('/api/v1/activity', (req, res) => {
+  const since = parseInt(req.query.since) || 0;
+  res.json({ events: activityLog.filter(e => e.timestamp > since), serverTime: Date.now() });
+});
+
+app.get('/xinnix/live', (req, res) => res.sendFile(path.join(__dirname, '..', 'web', 'live.html')));
+
+// Monkey-patch to capture events
+const _reg = registry.registerPublicOnly.bind(registry);
+registry.registerPublicOnly = function(pk, profile) {
+  const r = _reg(pk, profile);
+  logActivity('register', { agentId: r.agentId, name: profile.name, capabilities: profile.capabilities || [], trust: 0.1 });
+  return r;
+};
+
+const _vouch = registry.trust.vouch.bind(registry.trust);
+registry.trust.vouch = function(from, to, reason, conf) {
+  const r = _vouch(from, to, reason, conf);
+  logActivity('vouch', { from, to, reason });
+  return r;
+};
+
+const _send = registry.sendMessage.bind(registry);
+registry.sendMessage = function(fromId, toId, enc) {
+  const r = _send(fromId, toId, enc);
+  logActivity('message', { from: fromId, to: toId, encrypted: true });
+  return r;
+};
+
+const _hb = registry.heartbeat.bind(registry);
+registry.heartbeat = function(id) {
+  const r = _hb(id);
+  logActivity('heartbeat', { agentId: id });
+  return r;
+};
+
+export { logActivity };
 export default app;
