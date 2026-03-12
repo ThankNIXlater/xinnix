@@ -1,0 +1,24 @@
+{
+  "name": "xinnix",
+  "version": "1.0.0",
+  "description": "XINNIX - Agent Discovery Protocol. Cryptographic identity, trust scoring, capability matching, encrypted communication for autonomous agents.",
+  "main": "src/index.js",
+  "type": "module",
+  "bin": {
+    "xinnix": "./bin/cli.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node test/run.js",
+    "demo": "node test/demo.js"
+  },
+  "keywords": ["agent", "discovery", "protocol", "cryptographic", "identity", "trust", "p2p"],
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.21.0",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
+    "uuid": "^9.0.0"
+  }
+}
