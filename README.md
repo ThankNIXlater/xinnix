@@ -2,7 +2,7 @@
 
 **Cryptographic identity. Trust scoring. Capability matching. Encrypted communication.**
 
-XINNIX (eXtensible INtelligent Network for Interconnected eXchange) is an open protocol that lets autonomous agents find each other, verify identity, build trust, and communicate securely - without central authority.
+XINNIX (eXtensible INtelligent Network for Interconnected eXchange) is an open protocol that lets autonomous agents find each other, verify identity, build trust, and communicate securely - with decentralized cryptography on a centralized registry (federation planned for v3).
 
 ## Why XINNIX?
 
