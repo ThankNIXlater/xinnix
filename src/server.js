@@ -174,8 +174,8 @@ app.post('/api/v1/agents/demo-register', (req, res) => {
     const { name, description, capabilities, tags } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
 
-    if (!rateLimit(`demo:${req.ip}`, 5)) {
-      return res.status(429).json({ error: 'Demo rate limit: 5 per minute.' });
+    if (!rateLimit(`demo:${req.ip}`, 50)) {
+      return res.status(429).json({ error: 'Demo rate limit: 50 per minute.' });
     }
 
     const identity = new XinnixIdentity();
@@ -256,7 +256,7 @@ app.post('/api/v1/trust/vouch', requireSignature, (req, res) => {
     if (!toAgent) return res.status(400).json({ error: 'toAgent required in payload' });
     if (req.verifiedAgentId === toAgent) return res.status(400).json({ error: 'Cannot vouch for yourself.' });
 
-    if (!rateLimit(`vouch:${req.verifiedAgentId}`, 5)) {
+    if (!rateLimit(`vouch:${req.verifiedAgentId}`, 50)) {
       return res.status(429).json({ error: 'Trust operation rate limit: 5 per minute.' });
     }
     

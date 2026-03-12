@@ -20,7 +20,7 @@ const MAX_TRUST = 1.0;
 const DEFAULT_TRUST = 0.1;
 const KARMA_TRUST_RATIO = 0.001; // 1000 karma = 1.0 trust bonus (capped at 0.3)
 const KARMA_TRUST_CAP = 0.3;
-const COLLUSION_THRESHOLD = 3; // mutual vouch rings > this get flagged
+const COLLUSION_THRESHOLD = 0; // Mutual vouches flagged, but dampening only applies if no independent vouchers
 
 export class TrustEngine {
   constructor(db) {
@@ -278,11 +278,27 @@ export class TrustEngine {
 
   _getCollusionDampening(agentId) {
     const flags = this.db.prepare(
-      "SELECT dampening_factor FROM collusion_flags WHERE agents LIKE ?"
+      "SELECT dampening_factor, agents FROM collusion_flags WHERE agents LIKE ?"
     ).all(`%${agentId}%`);
     
     if (flags.length === 0) return 1.0;
-    // Worst dampening applies
+    
+    // Check if agent has independent vouchers (not part of any collusion ring)
+    const allRingMembers = new Set();
+    for (const f of flags) {
+      JSON.parse(f.agents).forEach(a => allRingMembers.add(a));
+    }
+    
+    const independentVouchers = this.db.prepare(
+      'SELECT COUNT(*) as c FROM trust_edges WHERE to_agent = ? AND from_agent NOT IN (' + 
+      Array.from(allRingMembers).map(() => '?').join(',') + ')'
+    ).get(agentId, ...Array.from(allRingMembers));
+    
+    // If agent has independent vouchers, reduce dampening impact
+    if (independentVouchers.c >= 2) return 1.0;  // 2+ independent vouchers = no dampening
+    if (independentVouchers.c === 1) return 0.5;  // 1 independent = half dampening
+    
+    // No independent vouchers = full dampening (likely sybil)
     return Math.min(...flags.map(f => f.dampening_factor));
   }
 
