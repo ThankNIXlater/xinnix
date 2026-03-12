@@ -16,6 +16,90 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
+// --- Security: HTML sanitization (strip all tags) ---
+function sanitize(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/<[^>]*>/g, '').trim();
+}
+
+// --- Security: Input length limits ---
+const LIMITS = {
+  name: 100,
+  description: 1000,
+  reason: 500,
+  capabilityItem: 100,
+  capabilityMax: 50,
+  tagItem: 50,
+  tagMax: 20,
+};
+
+function validateLengths(profile) {
+  if (profile.name !== undefined && profile.name.length > LIMITS.name) {
+    return `name exceeds ${LIMITS.name} chars`;
+  }
+  if (profile.description !== undefined && profile.description.length > LIMITS.description) {
+    return `description exceeds ${LIMITS.description} chars`;
+  }
+  if (profile.reason !== undefined && profile.reason.length > LIMITS.reason) {
+    return `reason exceeds ${LIMITS.reason} chars`;
+  }
+  if (profile.capabilities !== undefined) {
+    if (!Array.isArray(profile.capabilities)) return 'capabilities must be an array';
+    if (profile.capabilities.length > LIMITS.capabilityMax) {
+      return `capabilities exceeds ${LIMITS.capabilityMax} items`;
+    }
+    for (const cap of profile.capabilities) {
+      const name = typeof cap === 'string' ? cap : cap.name;
+      if (typeof name === 'string' && name.length > LIMITS.capabilityItem) {
+        return `capability item exceeds ${LIMITS.capabilityItem} chars`;
+      }
+    }
+  }
+  if (profile.tags !== undefined) {
+    if (!Array.isArray(profile.tags)) return 'tags must be an array';
+    if (profile.tags.length > LIMITS.tagMax) {
+      return `tags exceeds ${LIMITS.tagMax} items`;
+    }
+    for (const tag of profile.tags) {
+      if (typeof tag === 'string' && tag.length > LIMITS.tagItem) {
+        return `tag item exceeds ${LIMITS.tagItem} chars`;
+      }
+    }
+  }
+  return null;
+}
+
+// --- Security: Field-level body size limits (10KB per field) ---
+function validateBody(req, res, next) {
+  const FIELD_MAX = 10 * 1024; // 10KB
+  const body = req.body;
+  if (body && typeof body === 'object') {
+    for (const [key, val] of Object.entries(body)) {
+      const str = typeof val === 'string' ? val : JSON.stringify(val);
+      if (str.length > FIELD_MAX) {
+        return res.status(400).json({ error: `Field "${key}" exceeds 10KB limit` });
+      }
+    }
+  }
+  next();
+}
+
+// Apply field-level size check to all routes
+app.use(validateBody);
+
+// --- Security: Nonce tracking (replay prevention) ---
+// Store: nonce -> expiry timestamp
+const usedNonces = new Map();
+const NONCE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
+// Clean expired nonces every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [nonce, expiry] of usedNonces.entries()) {
+    if (now > expiry) usedNonces.delete(nonce);
+  }
+}, 60000).unref();
+
 // Rate limiting (in-memory, simple)
 const rateLimits = {};
 function rateLimit(key, maxPerMin = 10) {
@@ -62,6 +146,16 @@ function requireSignature(req, res, next) {
     return res.status(401).json({ error: `Signature verification failed: ${verification.reason}` });
   }
 
+  // --- Security: Nonce replay prevention ---
+  if (body.nonce) {
+    if (usedNonces.has(body.nonce)) {
+      return res.status(401).json({ error: 'Nonce already used (replay attack)' });
+    }
+    // Register nonce with expiry = timestamp + 5min window
+    const expiry = (body.timestamp || Date.now()) + NONCE_WINDOW_MS;
+    usedNonces.set(body.nonce, expiry);
+  }
+
   // Verify the signing key belongs to the claimed agent
   const agent = registry.lookup(verification.agentId);
   if (agent && agent.signingPublicKey !== body.signingPublicKey) {
@@ -85,6 +179,22 @@ app.post('/api/v1/agents/register', (req, res) => {
         hint: 'Generate keys CLIENT-SIDE. Never send private keys over the network.'
       });
     }
+
+    // Sanitize all string fields
+    if (profile.name) profile.name = sanitize(profile.name);
+    if (profile.description) profile.description = sanitize(profile.description);
+    if (Array.isArray(profile.capabilities)) {
+      profile.capabilities = profile.capabilities.map(c =>
+        typeof c === 'string' ? sanitize(c) : { ...c, name: sanitize(c.name || '') }
+      );
+    }
+    if (Array.isArray(profile.tags)) {
+      profile.tags = profile.tags.map(t => sanitize(t));
+    }
+
+    // Validate lengths
+    const lenErr = validateLengths(profile);
+    if (lenErr) return res.status(400).json({ error: lenErr });
 
     // Verify the registration request is signed by the claimed signing key
     const regData = { publicKeys, profile, timestamp, nonce };
@@ -118,6 +228,22 @@ app.post('/api/v1/agents/register-with-karma', async (req, res) => {
         hint: 'Include moltbook: { apiKey, agentName } for Karma Bank verification.'
       });
     }
+
+    // Sanitize all string fields
+    if (profile.name) profile.name = sanitize(profile.name);
+    if (profile.description) profile.description = sanitize(profile.description);
+    if (Array.isArray(profile.capabilities)) {
+      profile.capabilities = profile.capabilities.map(c =>
+        typeof c === 'string' ? sanitize(c) : { ...c, name: sanitize(c.name || '') }
+      );
+    }
+    if (Array.isArray(profile.tags)) {
+      profile.tags = profile.tags.map(t => sanitize(t));
+    }
+
+    // Validate lengths
+    const lenErr = validateLengths(profile);
+    if (lenErr) return res.status(400).json({ error: lenErr });
 
     // Verify signature
     const regData = { publicKeys, profile, timestamp, nonce, moltbook: { agentName: moltbook.agentName } };
@@ -168,11 +294,32 @@ app.post('/api/v1/agents/register-with-karma', async (req, res) => {
   }
 });
 
-// Quick register for demos ONLY - clearly marked, no key exposure
+// Quick register for demos ONLY - gated behind XINNIX_DEMO=true env flag
 app.post('/api/v1/agents/demo-register', (req, res) => {
+  // --- Security: only enabled when XINNIX_DEMO=true ---
+  if (process.env.XINNIX_DEMO !== 'true') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
   try {
-    const { name, description, capabilities, tags } = req.body;
+    let { name, description, capabilities, tags } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
+
+    // Sanitize inputs
+    name = sanitize(name);
+    description = description ? sanitize(description) : description;
+    if (Array.isArray(capabilities)) {
+      capabilities = capabilities.map(c =>
+        typeof c === 'string' ? sanitize(c) : { ...c, name: sanitize(c.name || '') }
+      );
+    }
+    if (Array.isArray(tags)) {
+      tags = tags.map(t => sanitize(t));
+    }
+
+    // Validate lengths
+    const lenErr = validateLengths({ name, description, capabilities, tags });
+    if (lenErr) return res.status(400).json({ error: lenErr });
 
     if (!rateLimit(`demo:${req.ip}`, 50)) {
       return res.status(429).json({ error: 'Demo rate limit: 50 per minute.' });
@@ -250,8 +397,13 @@ app.post('/api/v1/trust/vouch', requireSignature, (req, res) => {
   try {
     const { payload } = req.body;
     const toAgent = payload?.toAgent || req.body.toAgent;
-    const reason = payload?.reason || req.body.reason || '';
+    let reason = payload?.reason || req.body.reason || '';
     const capability = payload?.capability || req.body.capability;
+
+    // Sanitize and validate reason
+    reason = sanitize(reason);
+    const lenErr = validateLengths({ reason });
+    if (lenErr) return res.status(400).json({ error: lenErr });
     
     if (!toAgent) return res.status(400).json({ error: 'toAgent required in payload' });
     if (req.verifiedAgentId === toAgent) return res.status(400).json({ error: 'Cannot vouch for yourself.' });
@@ -272,7 +424,12 @@ app.post('/api/v1/trust/report', requireSignature, (req, res) => {
   try {
     const { payload } = req.body;
     const toAgent = payload?.toAgent || req.body.toAgent;
-    const reason = payload?.reason || req.body.reason || '';
+    let reason = payload?.reason || req.body.reason || '';
+
+    // Sanitize and validate reason
+    reason = sanitize(reason);
+    const lenErr = validateLengths({ reason });
+    if (lenErr) return res.status(400).json({ error: lenErr });
     
     if (!toAgent) return res.status(400).json({ error: 'toAgent required' });
     
@@ -451,13 +608,45 @@ app.get('/api/v1/protocol', (req, res) => {
 
 app.get('/', (req, res) => res.redirect('/xinnix'));
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  XINNIX Agent Discovery Protocol v2.0`);
   console.log(`  Server running on port ${PORT}`);
   console.log(`  Web interface: http://localhost:${PORT}/xinnix`);
   console.log(`  API base: http://localhost:${PORT}/api/v1`);
   console.log(`  Security: Signature-verified writes, Karma Bank, Key Revocation`);
-  console.log(`  Database: ${DB_PATH}\n`);
+  console.log(`  Database: ${DB_PATH}`);
+  console.log(`  Demo mode: ${process.env.XINNIX_DEMO === 'true' ? 'ENABLED' : 'disabled'}\n`);
 });
+
+// --- Security: Graceful shutdown ---
+function gracefulShutdown(signal) {
+  console.log(`\n  Received ${signal} - shutting down gracefully...`);
+  server.close(() => {
+    console.log('  HTTP server closed.');
+    try {
+      registry.close();
+      console.log('  Database closed.');
+    } catch (e) {
+      console.error('  Error closing DB:', e.message);
+    }
+    try {
+      registry.trust.destroy();
+      console.log('  Trust engine closed.');
+    } catch (e) {
+      // trust.destroy may not exist - that's fine
+    }
+    console.log('  Shutdown complete.');
+    process.exit(0);
+  });
+
+  // Force exit after 10s if server won't close
+  setTimeout(() => {
+    console.error('  Forced exit after timeout.');
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 export default app;

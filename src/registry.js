@@ -17,6 +17,12 @@ import { TrustEngine } from './trust.js';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'node:path';
 
+// --- Security: Escape LIKE wildcard characters to prevent SQL injection via LIKE ---
+function escapeLike(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 export class XinnixRegistry {
   constructor(dbPath = null) {
     const resolvedPath = dbPath || path.join(process.cwd(), 'xinnix.db');
@@ -153,14 +159,15 @@ export class XinnixRegistry {
   // Discover agents by capability
   findByCapability(capability, options = {}) {
     const { minTrust = 0, limit = 50, status = 'active' } = options;
+    const escaped = escapeLike(capability);
     
     const agents = this.db.prepare(`
       SELECT DISTINCT a.* FROM agents a
       JOIN capabilities c ON a.agent_id = c.agent_id
-      WHERE c.capability LIKE ? AND a.status = ?
+      WHERE c.capability LIKE ? ESCAPE '\\' AND a.status = ?
       ORDER BY c.proficiency DESC
       LIMIT ?
-    `).all(`%${capability}%`, status, limit);
+    `).all(`%${escaped}%`, status, limit);
 
     const results = agents
       .map(a => this._enrichAgent(a))
@@ -173,10 +180,11 @@ export class XinnixRegistry {
   // Discover agents by tag
   findByTag(tag, options = {}) {
     const { minTrust = 0, limit = 50 } = options;
+    const escaped = escapeLike(tag);
     
     const agents = this.db.prepare(`
-      SELECT * FROM agents WHERE tags LIKE ? AND status = 'active' LIMIT ?
-    `).all(`%"${tag}"%`, limit);
+      SELECT * FROM agents WHERE tags LIKE ? ESCAPE '\\' AND status = 'active' LIMIT ?
+    `).all(`%"${escaped}"%`, limit);
 
     const results = agents
       .map(a => this._enrichAgent(a))
@@ -199,11 +207,12 @@ export class XinnixRegistry {
   // Search agents by text query (name, description, capabilities)
   search(query, options = {}) {
     const { minTrust = 0, limit = 50 } = options;
-    const pattern = `%${query}%`;
+    const escaped = escapeLike(query);
+    const pattern = `%${escaped}%`;
     
     const agents = this.db.prepare(`
       SELECT * FROM agents 
-      WHERE (name LIKE ? OR description LIKE ? OR capabilities LIKE ? OR tags LIKE ?)
+      WHERE (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR capabilities LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\')
       AND status = 'active'
       LIMIT ?
     `).all(pattern, pattern, pattern, pattern, limit);

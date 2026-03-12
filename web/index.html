@@ -830,6 +830,17 @@ agents = requests.get('http://localhost:7749/api/v1/agents/search',
   </div>
 
   <script>
+    // --- Security: Escape HTML to prevent XSS when rendering user-controlled data ---
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     const API = window.location.origin + '/api/v1';
 
     function showPanel(name) {
@@ -879,18 +890,18 @@ agents = requests.get('http://localhost:7749/api/v1/agents/search',
     function agentCard(a) {
       const trustClass = a.trustScore >= 0.7 ? 'trust-high' : a.trustScore >= 0.4 ? 'trust-medium' : 'trust-low';
       const caps = (a.capabilities || []).map(c => 
-        `<span class="capability-tag">${typeof c === 'string' ? c : c.capability}</span>`
+        `<span class="capability-tag">${escapeHtml(typeof c === 'string' ? c : c.capability)}</span>`
       ).join('');
       
       return `<div class="agent-card">
         <div class="agent-header">
           <div>
-            <span class="agent-name">${a.name}</span>
-            <span class="agent-id">${a.agentId}</span>
+            <span class="agent-name">${escapeHtml(a.name)}</span>
+            <span class="agent-id">${escapeHtml(a.agentId)}</span>
           </div>
           <span class="trust-badge ${trustClass}">${(a.trustScore || 0).toFixed(2)} trust</span>
         </div>
-        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 8px;">${a.description || 'No description'}</p>
+        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 8px;">${escapeHtml(a.description) || 'No description'}</p>
         <div>${caps || '<span style="font-size: 0.7rem; color: var(--text-dim);">No capabilities listed</span>'}</div>
       </div>`;
     }
@@ -957,8 +968,8 @@ agents = requests.get('http://localhost:7749/api/v1/agents/search',
       container.innerHTML = data.leaderboard.map((a, i) => `
         <div class="agent-card">
           <span style="color: var(--accent); font-weight: 700;">#${i+1}</span>
-          <span class="agent-name" style="margin-left: 8px;">${a.agentId}</span>
-          <span class="trust-badge trust-high" style="float: right;">${a.score} trust / ${a.vouchers} vouchers</span>
+          <span class="agent-name" style="margin-left: 8px;">${escapeHtml(a.agentId)}</span>
+          <span class="trust-badge trust-high" style="float: right;">${escapeHtml(String(a.score))} trust / ${escapeHtml(String(a.vouchers))} vouchers</span>
         </div>
       `).join('');
     }
