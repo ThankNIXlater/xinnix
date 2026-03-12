@@ -206,7 +206,7 @@ app.post('/api/v1/agents/register', (req, res) => {
 
     // Rate limit
     const ip = req.ip || req.connection.remoteAddress;
-    if (!rateLimit(`reg:${ip}`, 3)) {
+    if (!rateLimit(`reg:${ip}`, 10)) {
       return res.status(429).json({ error: 'Registration rate limit: 3 per minute.' });
     }
 
@@ -408,7 +408,7 @@ app.post('/api/v1/trust/vouch', requireSignature, (req, res) => {
     if (!toAgent) return res.status(400).json({ error: 'toAgent required in payload' });
     if (req.verifiedAgentId === toAgent) return res.status(400).json({ error: 'Cannot vouch for yourself.' });
 
-    if (!rateLimit(`vouch:${req.verifiedAgentId}`, 50)) {
+    if (!rateLimit(`vouch:${req.verifiedAgentId}`, 20)) {
       return res.status(429).json({ error: 'Trust operation rate limit: 5 per minute.' });
     }
     
